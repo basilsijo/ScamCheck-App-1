@@ -7,6 +7,7 @@ import {
 import {
   findVerifiedIndianPhoneReport,
   findUserSubmittedIndianPhoneReport,
+  isPhoneThreatDetected,
   normalizeIndianMobileNumber,
 } from "../src/lib/phoneNumberAnalyzer.ts";
 import {
@@ -86,6 +87,18 @@ export function runFeatureTests(): FeatureTestResult[] {
         findUserSubmittedIndianPhoneReport(USER_SUBMITTED_INDIAN_PHONE_REPORTS[0].number)?.number === USER_SUBMITTED_INDIAN_PHONE_REPORTS[0].number
         ? "found" : "not found",
       expected: "found",
+    },
+    {
+      label: "user-submitted matches count as HIGH RISK in ScamCheck",
+      actual: USER_SUBMITTED_INDIAN_PHONE_REPORTS[0] &&
+        isPhoneThreatDetected(undefined, USER_SUBMITTED_INDIAN_PHONE_REPORTS[0])
+        ? "HIGH RISK" : "not found",
+      expected: "HIGH RISK",
+    },
+    {
+      label: "an unmatched number has no threat classification",
+      actual: isPhoneThreatDetected() ? "HIGH RISK" : "not found",
+      expected: "not found",
     },
     {
       label: "record source and import date for every entry",

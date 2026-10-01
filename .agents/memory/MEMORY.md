@@ -1,0 +1,1 @@
+- [ScamCheck phone-risk semantics](scamcheck-phone-risk.md) — any local phone-list match is high risk in-app; keep provenance clear and do not accuse an owner.

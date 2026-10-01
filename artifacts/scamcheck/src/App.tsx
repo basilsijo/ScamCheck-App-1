@@ -45,6 +45,7 @@ import {
 import {
   findVerifiedIndianPhoneReport,
   findUserSubmittedIndianPhoneReport,
+  isPhoneThreatDetected,
   normalizeIndianMobileNumber,
 } from "@/lib/phoneNumberAnalyzer";
 import {
@@ -294,11 +295,12 @@ function phoneResultText(
     const lines = [
       "PHONE NUMBER CHECK",
       `Number checked: ${number}`,
-      "Risk level: HIGH RISK — matched a verified local report.",
+      "Risk level: HIGH RISK — THREAT DETECTED.",
+      "This number is listed in ScamCheck's threat database. Treat calls or messages from it as high risk.",
       `Supporting evidence: ${verifiedReport.evidenceSummary}`,
       `Source: ${verifiedReport.source}`,
       `Report date: ${verifiedReport.reportDate}`,
-      "This source-backed listing does not establish who currently uses the number.",
+      "This app-specific risk result does not identify who owns the number or prove that a specific person committed a crime.",
     ];
     if (userSubmittedReport) {
       lines.push(
@@ -308,8 +310,8 @@ function phoneResultText(
     }
     return lines.join("\n");
   }
-  if (userSubmittedReport) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: This number appears in a user-submitted, unverified report list.\nSource: ${userSubmittedReport.source}\nImport date: ${userSubmittedReport.importDate}\nA match is not proof of wrongdoing and does not determine who uses the number.`;
-  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in the local phone-number list.\nAbsence from this list does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
+  if (userSubmittedReport) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nRisk level: HIGH RISK — THREAT DETECTED.\nThis number is listed in ScamCheck's threat database. Treat calls or messages from it as high risk.\nSource: ${userSubmittedReport.source}\nImport date: ${userSubmittedReport.importDate}\nThis entry remains user-submitted and unverified. The risk result does not identify who owns the number or prove that a specific person committed a crime.`;
+  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in our list.\nAbsence from this list does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
 }
 
 function websiteRisk(analysis: UrlAnalysis): RiskLevel {
@@ -458,6 +460,7 @@ export default function App() {
     ) === index)
     : [];
   const activeResult = !!messageResult || !!websiteResult || !!phoneResult || phoneDemo;
+  const phoneThreatDetected = isPhoneThreatDetected(phoneResult?.verifiedReport, phoneResult?.userSubmittedReport);
   const modeTitles: Record<CheckMode, string> = { phone: "Phone Number", message: "SMS / Message", website: "Website" };
   const alternatives = websiteResult ? getVerifiedAlternativesForUrl(websiteResult.url) : [];
   const selectedInputId = `${mode}-input`;
@@ -552,14 +555,14 @@ export default function App() {
 
           {phoneResult && (
             <section className="results reveal" aria-label="Phone number lookup results" data-testid="section-phone-results">
-              <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : phoneResult.verifiedReport ? " phone-high-risk" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
-                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : phoneResult.verifiedReport ? <ShieldX size={21} aria-hidden="true" /> : phoneResult.userSubmittedReport ? <Info size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.verifiedReport ? "HIGH RISK — verified source listing" : phoneResult.userSubmittedReport ? "User-submitted report found" : "No match in local list"}</h2></div>
-                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.verifiedReport ? `${phoneResult.verifiedReport.evidenceSummary} This source-backed listing supports a HIGH RISK result, but does not establish who currently uses the number.` : phoneResult.userSubmittedReport ? "This number appears in a user-submitted, unverified report list. A match is not proof of wrongdoing and does not determine who uses the number." : "This number was not found in the local list. Its absence does not mean the number is safe."}</p>
+              <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : phoneThreatDetected ? " phone-high-risk" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
+                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : phoneThreatDetected ? <ShieldX size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneThreatDetected ? "HIGH RISK — THREAT DETECTED" : "Not found in our list"}</h2></div>
+                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.verifiedReport ? `${phoneResult.verifiedReport.evidenceSummary} This number is listed in ScamCheck's threat database. Treat calls or messages from it as high risk. This app-specific risk result does not identify who owns the number or prove that a specific person committed a crime.` : phoneResult.userSubmittedReport ? "This number is listed in ScamCheck's threat database. Treat calls or messages from it as high risk. This entry remains user-submitted and unverified; the risk result does not identify who owns the number or prove that a specific person committed a crime." : "This number was not found in our list. Its absence does not mean the number is safe."}</p>
                 {!phoneResult.invalid && <p className="phone-privacy-note"><LockKeyhole size={15} aria-hidden="true" /> Checked on this device only. The number was not logged or transmitted.</p>}
                 {phoneResult.verifiedReport && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.verifiedReport.source}</dd></div><div><dt>Report date</dt><dd>{phoneResult.verifiedReport.reportDate}</dd></div></dl>}
                 {phoneResult.userSubmittedReport && !phoneResult.verifiedReport && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.userSubmittedReport.source}</dd></div><div><dt>Import date</dt><dd>{phoneResult.userSubmittedReport.importDate}</dd></div></dl>}
                 {phoneResult.userSubmittedReport && phoneResult.verifiedReport && <div className="phone-empty-state"><strong>Separate user-submitted report — unverified</strong><p>This is a distinct user report, not proof of wrongdoing. Source: {phoneResult.userSubmittedReport.source}; imported {phoneResult.userSubmittedReport.importDate}.</p></div>}
-                {!phoneResult.invalid && !phoneResult.verifiedReport && !phoneResult.userSubmittedReport && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>No local listing found</strong><p>The list includes verified-source and user-submitted reports. Absence from it does not mean a number is safe.</p></div>}
+                {!phoneResult.invalid && !phoneThreatDetected && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>Not found in our list</strong><p>Absence from this list does not mean a number is safe.</p></div>}
               </section>
             </section>
           )}

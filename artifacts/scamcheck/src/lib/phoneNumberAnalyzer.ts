@@ -61,3 +61,11 @@ export function findVerifiedIndianPhoneReport(
       report.evidenceSummary.trim().length > 0,
   );
 }
+
+/** Any local-list match is a high-risk signal for ScamCheck, regardless of verification status. */
+export function isPhoneThreatDetected(
+  verifiedReport?: VerifiedIndianPhoneReport,
+  userSubmittedReport?: UserSubmittedIndianPhoneReport,
+): boolean {
+  return Boolean(verifiedReport || userSubmittedReport);
+}
