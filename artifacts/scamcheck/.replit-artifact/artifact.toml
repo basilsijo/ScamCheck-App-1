@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "ScamCheck"
+description = "ScamCheck helps people inspect suspicious messages and links with local rule-based signals, with optional AI context analysis."
+version = "1.0.0"
+id = "artifacts/scamcheck"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 23808
+
+[services.development]
+run = "pnpm --filter @workspace/scamcheck run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/scamcheck", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/scamcheck/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "23808"
+BASE_PATH = "/"
