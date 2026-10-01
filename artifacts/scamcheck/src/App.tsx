@@ -43,11 +43,13 @@ import {
   type SignalCategory,
 } from "@/lib/scamAnalyzer";
 import {
+  findVerifiedIndianPhoneReport,
   findUserSubmittedIndianPhoneReport,
   normalizeIndianMobileNumber,
 } from "@/lib/phoneNumberAnalyzer";
 import {
   SYNTHETIC_PHONE_REPORT_DEMO,
+  type VerifiedIndianPhoneReport,
   type UserSubmittedIndianPhoneReport,
 } from "@/lib/indiaScamNumbers";
 
@@ -281,10 +283,33 @@ function HelpSection() {
 
 type CheckMode = "phone" | "message" | "website";
 
-function phoneResultText(number: string, matched: UserSubmittedIndianPhoneReport | undefined, invalid: boolean): string {
+function phoneResultText(
+  number: string,
+  verifiedReport: VerifiedIndianPhoneReport | undefined,
+  userSubmittedReport: UserSubmittedIndianPhoneReport | undefined,
+  invalid: boolean,
+): string {
   if (invalid) return `PHONE NUMBER CHECK\nThe entered value is not a plausible Indian mobile number. No lookup was performed.`;
-  if (matched) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: This number appears in a user-submitted, unverified report list.\nSource: ${matched.source}\nImport date: ${matched.importDate}\nA match is not proof of wrongdoing and does not determine who uses the number.`;
-  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in the user-submitted, unverified report list.\nAbsence from this list does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
+  if (verifiedReport) {
+    const lines = [
+      "PHONE NUMBER CHECK",
+      `Number checked: ${number}`,
+      "Risk level: HIGH RISK — matched a verified local report.",
+      `Supporting evidence: ${verifiedReport.evidenceSummary}`,
+      `Source: ${verifiedReport.source}`,
+      `Report date: ${verifiedReport.reportDate}`,
+      "This source-backed listing does not establish who currently uses the number.",
+    ];
+    if (userSubmittedReport) {
+      lines.push(
+        `Separate user-submitted report: unverified; source ${userSubmittedReport.source}; imported ${userSubmittedReport.importDate}.`,
+        "A user-submitted report is not proof of wrongdoing.",
+      );
+    }
+    return lines.join("\n");
+  }
+  if (userSubmittedReport) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: This number appears in a user-submitted, unverified report list.\nSource: ${userSubmittedReport.source}\nImport date: ${userSubmittedReport.importDate}\nA match is not proof of wrongdoing and does not determine who uses the number.`;
+  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in the local phone-number list.\nAbsence from this list does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
 }
 
 function websiteRisk(analysis: UrlAnalysis): RiskLevel {
@@ -297,7 +322,12 @@ export default function App() {
   const [text, setText] = useState("");
   const [messageResult, setMessageResult] = useState<AnalysisResult | null>(null);
   const [websiteResult, setWebsiteResult] = useState<UrlAnalysis | null>(null);
-  const [phoneResult, setPhoneResult] = useState<{ number: string; report?: UserSubmittedIndianPhoneReport; invalid: boolean } | null>(null);
+  const [phoneResult, setPhoneResult] = useState<{
+    number: string;
+    verifiedReport?: VerifiedIndianPhoneReport;
+    userSubmittedReport?: UserSubmittedIndianPhoneReport;
+    invalid: boolean;
+  } | null>(null);
   const [phoneDemo, setPhoneDemo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
@@ -355,8 +385,9 @@ export default function App() {
     }
     const normalized = normalizeIndianMobileNumber(text);
     const invalid = normalized === null;
-    const report = normalized ? findUserSubmittedIndianPhoneReport(normalized) : undefined;
-    setPhoneResult({ number: normalized ?? "", report, invalid });
+    const verifiedReport = normalized ? findVerifiedIndianPhoneReport(normalized) : undefined;
+    const userSubmittedReport = normalized ? findUserSubmittedIndianPhoneReport(normalized) : undefined;
+    setPhoneResult({ number: normalized ?? "", verifiedReport, userSubmittedReport, invalid });
   };
   const handleClear = () => { setText(""); clearResults(); };
   const handleTryAnother = () => {
@@ -384,7 +415,14 @@ export default function App() {
           : ["No organization-specific verified alternative was identified. Use the official app or manually navigate to a known official website or trusted support channel."]),
       ].join("\n");
     }
-    if (mode === "phone" && phoneResult) report = phoneResultText(phoneResult.number, phoneResult.report, phoneResult.invalid);
+    if (mode === "phone" && phoneResult) {
+      report = phoneResultText(
+        phoneResult.number,
+        phoneResult.verifiedReport,
+        phoneResult.userSubmittedReport,
+        phoneResult.invalid,
+      );
+    }
     if (mode === "phone" && phoneDemo) {
       report = [
         "PHONE NUMBER CHECK — SYNTHETIC DEMO ONLY",
@@ -514,12 +552,14 @@ export default function App() {
 
           {phoneResult && (
             <section className="results reveal" aria-label="Phone number lookup results" data-testid="section-phone-results">
-              <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
-                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : phoneResult.report ? <Info size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.report ? "User-submitted report found" : "No match in user-submitted list"}</h2></div>
-                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.report ? "This number appears in a user-submitted, unverified report list. A match is not proof of wrongdoing and does not determine who uses the number." : "This number was not found in the user-submitted list. Its absence does not mean the number is safe."}</p>
+              <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : phoneResult.verifiedReport ? " phone-high-risk" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
+                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : phoneResult.verifiedReport ? <ShieldX size={21} aria-hidden="true" /> : phoneResult.userSubmittedReport ? <Info size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.verifiedReport ? "HIGH RISK — verified source listing" : phoneResult.userSubmittedReport ? "User-submitted report found" : "No match in local list"}</h2></div>
+                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.verifiedReport ? `${phoneResult.verifiedReport.evidenceSummary} This source-backed listing supports a HIGH RISK result, but does not establish who currently uses the number.` : phoneResult.userSubmittedReport ? "This number appears in a user-submitted, unverified report list. A match is not proof of wrongdoing and does not determine who uses the number." : "This number was not found in the local list. Its absence does not mean the number is safe."}</p>
                 {!phoneResult.invalid && <p className="phone-privacy-note"><LockKeyhole size={15} aria-hidden="true" /> Checked on this device only. The number was not logged or transmitted.</p>}
-                {phoneResult.report && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.report.source}</dd></div><div><dt>Import date</dt><dd>{phoneResult.report.importDate}</dd></div></dl>}
-                {!phoneResult.invalid && !phoneResult.report && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>User-submitted, unverified data</strong><p>This local lookup checks the imported list only. A match is not proof of wrongdoing; no match does not mean a number is safe.</p></div>}
+                {phoneResult.verifiedReport && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.verifiedReport.source}</dd></div><div><dt>Report date</dt><dd>{phoneResult.verifiedReport.reportDate}</dd></div></dl>}
+                {phoneResult.userSubmittedReport && !phoneResult.verifiedReport && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.userSubmittedReport.source}</dd></div><div><dt>Import date</dt><dd>{phoneResult.userSubmittedReport.importDate}</dd></div></dl>}
+                {phoneResult.userSubmittedReport && phoneResult.verifiedReport && <div className="phone-empty-state"><strong>Separate user-submitted report — unverified</strong><p>This is a distinct user report, not proof of wrongdoing. Source: {phoneResult.userSubmittedReport.source}; imported {phoneResult.userSubmittedReport.importDate}.</p></div>}
+                {!phoneResult.invalid && !phoneResult.verifiedReport && !phoneResult.userSubmittedReport && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>No local listing found</strong><p>The list includes verified-source and user-submitted reports. Absence from it does not mean a number is safe.</p></div>}
               </section>
             </section>
           )}

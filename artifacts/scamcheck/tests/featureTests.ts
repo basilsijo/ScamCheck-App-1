@@ -2,8 +2,10 @@ import {
   SYNTHETIC_PHONE_REPORT_DEMO,
   PHONE_REPORT_IMPORT_STATS,
   USER_SUBMITTED_INDIAN_PHONE_REPORTS,
+  VERIFIED_INDIAN_PHONE_REPORTS,
 } from "../src/lib/indiaScamNumbers.ts";
 import {
+  findVerifiedIndianPhoneReport,
   findUserSubmittedIndianPhoneReport,
   normalizeIndianMobileNumber,
 } from "../src/lib/phoneNumberAnalyzer.ts";
@@ -89,9 +91,22 @@ export function runFeatureTests(): FeatureTestResult[] {
       label: "record source and import date for every entry",
       actual: USER_SUBMITTED_INDIAN_PHONE_REPORTS.every((entry) =>
         entry.source === "User-provided number list" &&
-        entry.importDate === "2026-10-02"
+        entry.importDate === "2026-10-02" &&
+        entry.verificationStatus === "unverified"
       ) ? "consistent" : "inconsistent",
       expected: "consistent",
+    },
+    {
+      label: "keep verified reports separate until credible source records exist",
+      actual: String(VERIFIED_INDIAN_PHONE_REPORTS.length),
+      expected: "0",
+    },
+    {
+      label: "do not promote a user-submitted entry to verified",
+      actual: USER_SUBMITTED_INDIAN_PHONE_REPORTS[0] &&
+        findVerifiedIndianPhoneReport(USER_SUBMITTED_INDIAN_PHONE_REPORTS[0].number)
+        ? "verified" : "unverified",
+      expected: "unverified",
     },
     {
       label: "stored entries are unique and normalized",

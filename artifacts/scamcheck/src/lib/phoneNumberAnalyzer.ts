@@ -1,5 +1,7 @@
 import {
   USER_SUBMITTED_INDIAN_PHONE_REPORTS,
+  VERIFIED_INDIAN_PHONE_REPORTS,
+  type VerifiedIndianPhoneReport,
   type UserSubmittedIndianPhoneReport,
 } from "./indiaScamNumbers";
 
@@ -44,5 +46,18 @@ export function findUserSubmittedIndianPhoneReport(
 ): UserSubmittedIndianPhoneReport | undefined {
   return USER_SUBMITTED_INDIAN_PHONE_REPORTS.find(
     (report) => report.number === normalizedNumber,
+  );
+}
+
+export function findVerifiedIndianPhoneReport(
+  normalizedNumber: string,
+): VerifiedIndianPhoneReport | undefined {
+  return VERIFIED_INDIAN_PHONE_REPORTS.find(
+    (report) =>
+      report.number === normalizedNumber &&
+      report.verificationStatus === "verified" &&
+      report.source.trim().length > 0 &&
+      report.reportDate.trim().length > 0 &&
+      report.evidenceSummary.trim().length > 0,
   );
 }
