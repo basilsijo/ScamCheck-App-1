@@ -1,11 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
   BadgeCheck,
-  Brain,
   Check,
-  ChevronRight,
   CircleAlert,
   CircleCheck,
   Copy,
@@ -28,15 +26,30 @@ import {
   X,
 } from "lucide-react";
 import {
+  analyzeUrl,
+  extractUrls,
+  getUrlDeduplicationKey,
+  getVerifiedAlternatives,
+  getVerifiedAlternativesForUrl,
+  normalizeWebsiteUrlInput,
+  type CheckStatus,
+  type UrlAnalysis,
+} from "@/lib/urlAnalyzer";
+import {
   analyzeMessage,
   EXAMPLE_MESSAGES,
   type AnalysisResult,
   type RiskLevel,
   type SignalCategory,
 } from "@/lib/scamAnalyzer";
-import { extractUrls, getUrlDeduplicationKey, getVerifiedAlternatives, type UrlAnalysis, type CheckStatus } from "@/lib/urlAnalyzer";
-import { fetchAiAnalysis, type AiAnalysis, type AiRisk } from "@/lib/aiAnalysis";
-import { combineResults, type CombinedResult } from "@/lib/combinedResult";
+import {
+  findVerifiedIndianPhoneReport,
+  normalizeIndianMobileNumber,
+} from "@/lib/phoneNumberAnalyzer";
+import {
+  SYNTHETIC_PHONE_REPORT_DEMO,
+  type VerifiedIndianPhoneReport,
+} from "@/lib/indiaScamNumbers";
 
 const THEME_KEY = "scamcheck-theme";
 
@@ -59,12 +72,6 @@ const RISK_CONFIG: Record<RiskLevel, { label: string; icon: typeof Shield }> = {
   high: { label: "High risk", icon: ShieldX },
 };
 
-const AI_RISK_CONFIG: Record<AiRisk, { label: string; icon: typeof Shield }> = {
-  LOW: { label: "Low risk", icon: ShieldCheck },
-  SUSPICIOUS: { label: "Suspicious", icon: ShieldAlert },
-  HIGH: { label: "High risk", icon: ShieldX },
-};
-
 const STATUS_CONFIG: Record<CheckStatus, { icon: typeof CircleCheck; className: string }> = {
   good: { icon: CircleCheck, className: "check-good" },
   warning: { icon: CircleAlert, className: "check-warning" },
@@ -82,13 +89,10 @@ const CATEGORY_LABELS: Record<SignalCategory, string> = {
 
 function ResultText(
   result: AnalysisResult,
-  combined: CombinedResult | null,
-  ai: AiAnalysis | null,
   message: string
 ): string {
-  const riskToShow = combined?.combinedRisk ?? result.riskLevel;
   const lines: string[] = [];
-  lines.push(`RISK RESULT: ${riskToShow.toUpperCase()}${combined && ai ? ` · ${combined.combinedConfidence}% confidence` : ""}`);
+  lines.push(`RISK RESULT: ${result.riskLevel.toUpperCase()}`);
   lines.push(`Rule-based score: ${result.totalScore}`);
   lines.push("");
   lines.push("WHY THIS RESULT");
@@ -111,14 +115,6 @@ function ResultText(
     for (const check of linkAnalysis.checks) lines.push(`${check.status.toUpperCase()} ${check.label}: ${check.detail}`);
     lines.push(`Summary: ${linkAnalysis.summary}`);
   }
-  if (ai) {
-    lines.push("OPTIONAL AI CONTEXT");
-    lines.push(`Risk: ${ai.risk}`);
-    lines.push(`Confidence: ${ai.confidence}%`);
-    if (ai.reasons.length > 0) lines.push(`Reasons:\n${ai.reasons.map((reason) => `- ${reason}`).join("\n")}`);
-    if (ai.red_flags.length > 0) lines.push(`Red flags:\n${ai.red_flags.map((flag) => `- ${flag}`).join("\n")}`);
-    if (combined?.note) lines.push(`Combined assessment: ${combined.note}`);
-  }
   lines.push("");
   lines.push("SAFE ALTERNATIVE");
   const alternatives = getVerifiedAlternatives(message);
@@ -140,11 +136,7 @@ function ResultText(
   } else {
     lines.push("1. Verify unexpected requests through an official app, website, or trusted contact route.");
   }
-  if (ai?.advice.length) {
-    lines.push("Optional AI suggestions:");
-    for (const advice of ai.advice) lines.push(`- ${advice}`);
-  }
-  if (riskToShow === "high") {
+  if (result.riskLevel === "high") {
     lines.push("Do not click the suspicious link or share OTPs, passwords, PINs, CVV, or banking details.");
     lines.push("If financial fraud has occurred, contact your bank and call the official cybercrime helpline at 1930 promptly.");
   }
@@ -170,8 +162,10 @@ function FallbackGuidance({ organization }: { organization?: string }) {
   );
 }
 
-function SafeAlternativeSection({ message }: { message: string }) {
-  const alternatives = getVerifiedAlternatives(message);
+function SafeAlternativeSection({ message, website = false }: { message: string; website?: boolean }) {
+  const alternatives = website
+    ? getVerifiedAlternativesForUrl(message)
+    : getVerifiedAlternatives(message);
   const urls = extractUrls(message);
   return (
     <section className="content-card safe-card" aria-labelledby="safe-alternative-heading" data-testid="section-safe-alternative">
@@ -181,8 +175,8 @@ function SafeAlternativeSection({ message }: { message: string }) {
       </div>
       {urls.length > 0 && (
         <div className="url-warning" data-testid="status-suspicious-links">
-          <div className="url-warning-title"><AlertTriangle size={15} aria-hidden="true" /> Link found in the message · suspicious</div>
-          <p>Avoid using this link. It is shown as text only and is not clickable.</p>
+          <div className="url-warning-title"><AlertTriangle size={15} aria-hidden="true" />{website ? "Website address checked locally" : "Link found in the message · suspicious"}</div>
+          <p>{website ? "This address is shown as text only. ScamCheck did not open or fetch it." : "Avoid using this link. It is shown as text only and is not clickable."}</p>
           {urls.map((url) => <p className="suspicious-url" key={url}>{url}</p>)}
         </div>
       )}
@@ -190,7 +184,7 @@ function SafeAlternativeSection({ message }: { message: string }) {
         <div className="plain-list">
           {alternatives.map((alternative) => (
             <div className="alternative-item" key={alternative.organization}>
-              <p className="input-subtitle" style={{ marginBottom: 2 }}>This message appears to involve</p>
+              <p className="input-subtitle" style={{ marginBottom: 2 }}>{website ? "This address appears to involve" : "This message appears to involve"}</p>
               <p className="alternative-org">{alternative.organization}</p>
               {alternative.officialUrl ? (
                 <>
@@ -236,48 +230,9 @@ function LinkAnalysisCard({ analysis }: { analysis: UrlAnalysis }) {
   );
 }
 
-function AiAnalysisCard({ ai, error, combined, onRetry }: { ai: AiAnalysis | null; error: string | null; combined: CombinedResult | null; onRetry: () => void }) {
-  if (error && !ai) {
-    return (
-      <section className="content-card ai-unavailable" data-testid="status-ai-unavailable">
-        <div className="card-heading"><Brain size={21} aria-hidden="true" /><h2>Optional AI context</h2></div>
-        <p>AI analysis is temporarily unavailable. Your local rule-based result is complete and remains available.</p>
-        {import.meta.env.DEV ? <p className="ai-error-detail" role="status" data-testid="text-ai-error-detail">{error}</p> : null}
-        <button className="secondary-button ai-retry" type="button" onClick={onRetry} data-testid="button-retry-ai-context"><RotateCcw size={15} aria-hidden="true" /> Retry AI context</button>
-      </section>
-    );
-  }
-  if (!ai) return null;
-  const aiConfig = AI_RISK_CONFIG[ai.risk];
-  const AssessmentIcon = aiConfig.icon;
-  return (
-    <section className="content-card" data-testid="card-ai-analysis">
-      <div className="card-heading"><Brain size={21} aria-hidden="true" /><h2>AI context analysis</h2></div>
-      <div className="ai-banner">
-        <div><strong><AssessmentIcon size={16} style={{ verticalAlign: "text-bottom", marginRight: 5 }} aria-hidden="true" />{aiConfig.label}</strong><p>Optional AI assessment</p></div>
-        <div className="ai-confidence">{ai.confidence}%<p>Confidence</p></div>
-      </div>
-      {combined?.note && <div className="info-note"><Info size={15} style={{ verticalAlign: "text-bottom", marginRight: 6 }} aria-hidden="true" />{combined.note}</div>}
-      <div className="ai-result-section">
-        <h3>Reasons</h3>
-        {ai.reasons.length > 0 ? <ul className="sub-list">{ai.reasons.map((reason, index) => <li key={`reason-${index}`}><ChevronRight size={15} />{reason}</li>)}</ul> : <p className="ai-empty-list">No reasons provided.</p>}
-      </div>
-      <div className="ai-result-section">
-        <h3>Red flags</h3>
-        {ai.red_flags.length > 0 ? <ul className="sub-list">{ai.red_flags.map((flag, index) => <li className="flag-item" key={`flag-${index}`}><AlertTriangle size={15} />{flag}</li>)}</ul> : <p className="ai-empty-list">No red flags reported.</p>}
-      </div>
-      <div className="ai-result-section">
-        <h3>Advice</h3>
-        {ai.advice.length > 0 ? <ul className="sub-list">{ai.advice.map((advice, index) => <li key={`advice-${index}`}><ChevronRight size={15} />{advice}</li>)}</ul> : <p className="ai-empty-list">No specific advice returned.</p>}
-      </div>
-    </section>
-  );
-}
-
-function ActionChecklist({ result, risk, aiAdvice }: { result: AnalysisResult; risk: RiskLevel; aiAdvice: string[] }) {
+function ActionChecklist({ result, risk }: { result: AnalysisResult; risk: RiskLevel }) {
   const actions = result.advice.map((item) => item.text);
   if (actions.length === 0) actions.push("Verify unexpected requests through an official app, website, or trusted contact route.");
-  for (const advice of aiAdvice) if (!actions.includes(advice)) actions.push(advice);
   if (risk === "high") {
     actions.unshift("Do not click the suspicious link or reply to the message.");
     actions.push("Do not share an OTP, password, PIN, CVV, or banking details.");
@@ -324,19 +279,30 @@ function HelpSection() {
   );
 }
 
+type CheckMode = "phone" | "message" | "website";
+
+function phoneResultText(number: string, matched: VerifiedIndianPhoneReport | undefined, invalid: boolean): string {
+  if (invalid) return `PHONE NUMBER CHECK\nThe entered value is not a plausible Indian mobile number. No lookup was performed.`;
+  if (matched) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Listed in the local verified reports list.\nSource: ${matched.source}\nReport date: ${matched.reportDate}\nThis listing is a report record, not a determination about the person using the number.`;
+  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in this local list.\nNo verified phone reports or sources have been supplied. This result does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
+}
+
+function websiteRisk(analysis: UrlAnalysis): RiskLevel {
+  const score = analysis.signals.reduce((total, signal) => total + signal.points, 0);
+  return score >= 9 ? "high" : score >= 3 ? "suspicious" : "low";
+}
+
 export default function App() {
+  const [mode, setMode] = useState<CheckMode>("message");
   const [text, setText] = useState("");
-  const [result, setResult] = useState<AnalysisResult | null>(null);
-  const [aiAnalysis, setAiAnalysis] = useState<AiAnalysis | null>(null);
-  const [aiError, setAiError] = useState<string | null>(null);
-  const [aiLoading, setAiLoading] = useState(false);
-  const [combined, setCombined] = useState<CombinedResult | null>(null);
+  const [messageResult, setMessageResult] = useState<AnalysisResult | null>(null);
+  const [websiteResult, setWebsiteResult] = useState<UrlAnalysis | null>(null);
+  const [phoneResult, setPhoneResult] = useState<{ number: string; report?: VerifiedIndianPhoneReport; invalid: boolean } | null>(null);
+  const [phoneDemo, setPhoneDemo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(getInitialTheme);
-  // Counts analysis runs so a slow, older AI answer can never overwrite a newer result.
-  const requestIdRef = useRef(0);
 
   useEffect(() => {
     const sections = document.querySelectorAll<HTMLElement>("[data-scroll-reveal]");
@@ -345,114 +311,118 @@ export default function App() {
       showAll();
       return;
     }
-
     const observer = new IntersectionObserver((entries, currentObserver) => {
-      for (const entry of entries) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("is-visible");
-          currentObserver.unobserve(entry.target);
-        }
+      for (const entry of entries) if (entry.isIntersecting) {
+        entry.target.classList.add("is-visible");
+        currentObserver.unobserve(entry.target);
       }
     }, { threshold: 0.12, rootMargin: "0px 0px -24px 0px" });
-
     sections.forEach((section) => observer.observe(section));
     return () => observer.disconnect();
-  }, [result]);
+  }, [mode, messageResult, websiteResult, phoneResult]);
 
+  const clearResults = () => {
+    setMessageResult(null);
+    setWebsiteResult(null);
+    setPhoneResult(null);
+    setPhoneDemo(false);
+    setCopied(false);
+  };
+  const changeMode = (next: CheckMode) => {
+    if (next === mode) return;
+    setMode(next);
+    setText("");
+    setShowExamples(false);
+    clearResults();
+  };
   const toggleTheme = () => {
     const nextTheme = theme === "dark" ? "light" : "dark";
     setTheme(nextTheme);
-    try {
-      window.localStorage.setItem(THEME_KEY, nextTheme);
-    } catch {
-      // The current session still changes themes if storage is unavailable.
-    }
+    try { window.localStorage.setItem(THEME_KEY, nextTheme); } catch { /* Session theme still updates. */ }
     document.documentElement.classList.toggle("dark", nextTheme === "dark");
     document.documentElement.dataset.theme = nextTheme;
   };
-
-  const runAnalysis = async (messageText: string) => {
-    const requestId = ++requestIdRef.current;
-    const ruleResult = analyzeMessage(messageText);
-    setResult(ruleResult);
-    setAiAnalysis(null);
-    setAiError(null);
-    setCombined(null);
-    setAiLoading(true);
-    try {
-      const { analysis, error } = await fetchAiAnalysis(messageText, ruleResult);
-      if (requestId !== requestIdRef.current) return; // a newer analysis started or the form was cleared
-      if (analysis) {
-        setAiAnalysis(analysis);
-        setCombined(combineResults(ruleResult.riskLevel, ruleResult.totalScore, analysis.risk, analysis.confidence));
-      } else {
-        setAiError(error ?? "The AI function returned no analysis. Your rule-based result is complete.");
-      }
-    } catch (err) {
-      if (requestId !== requestIdRef.current) return;
-      setAiError(err instanceof Error ? err.message : "An unexpected error occurred during AI analysis. Your rule-based result is complete.");
-    } finally {
-      if (requestId === requestIdRef.current) setAiLoading(false);
-    }
-  };
-
   const handleCheck = () => {
-    if (!text.trim() || aiLoading) return;
-    void runAnalysis(text);
+    clearResults();
+    if (mode === "message") {
+      if (text.trim()) setMessageResult(analyzeMessage(text));
+      return;
+    }
+    if (mode === "website") {
+      const websiteUrl = normalizeWebsiteUrlInput(text);
+      if (websiteUrl) setWebsiteResult(analyzeUrl(websiteUrl, websiteUrl));
+      return;
+    }
+    const normalized = normalizeIndianMobileNumber(text);
+    const invalid = normalized === null;
+    const report = normalized ? findVerifiedIndianPhoneReport(normalized) : undefined;
+    setPhoneResult({ number: normalized ?? "", report, invalid });
   };
-
-  const handleClear = () => {
-    requestIdRef.current += 1; // ignore any AI answer that is still on its way
-    setAiLoading(false);
-    setText("");
-    setResult(null);
-    setAiAnalysis(null);
-    setAiError(null);
-    setCombined(null);
-    setCopied(false);
-  };
-
+  const handleClear = () => { setText(""); clearResults(); };
   const handleTryAnother = () => {
-    requestIdRef.current += 1;
-    setAiLoading(false);
-    setResult(null);
-    setAiAnalysis(null);
-    setAiError(null);
-    setCombined(null);
-    setCopied(false);
-    document.getElementById("message-input")?.focus();
+    setText("");
+    clearResults();
+    const inputId = mode === "phone" ? "phone-input" : mode === "website" ? "website-input" : "message-input";
+    document.getElementById(inputId)?.focus();
     const reduceMotion = typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     document.getElementById("analyze")?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
   };
-
   const handleCopy = async () => {
-    if (!result) return;
+    let report = "";
+    if (mode === "message" && messageResult) report = ResultText(messageResult, text);
+    if (mode === "website" && websiteResult) {
+      const alternatives = getVerifiedAlternativesForUrl(websiteResult.url);
+      report = [
+        `WEBSITE CHECK\nRisk result: ${websiteRisk(websiteResult).toUpperCase()}`,
+        `URL checked (not opened): ${websiteResult.url}`,
+        `Summary: ${websiteResult.summary}`,
+        ...websiteResult.checks.map((check) => `${check.status.toUpperCase()} ${check.label}: ${check.detail}`),
+        "SAFE ALTERNATIVE",
+        ...(alternatives.length ? alternatives.map((item) => item.officialUrl
+          ? `${item.organization} verified official website: ${item.officialUrl}`
+          : `No verified official link is available for ${item.organization}. Use its official app or a trusted channel.`)
+          : ["No organization-specific verified alternative was identified. Use the official app or manually navigate to a known official website or trusted support channel."]),
+      ].join("\n");
+    }
+    if (mode === "phone" && phoneResult) report = phoneResultText(phoneResult.number, phoneResult.report, phoneResult.invalid);
+    if (mode === "phone" && phoneDemo) {
+      report = [
+        "PHONE NUMBER CHECK — SYNTHETIC DEMO ONLY",
+        `Placeholder: ${SYNTHETIC_PHONE_REPORT_DEMO.number} (invalid as an Indian mobile number)`,
+        `Source: ${SYNTHETIC_PHONE_REPORT_DEMO.source}`,
+        `Report date: ${SYNTHETIC_PHONE_REPORT_DEMO.reportDate}`,
+        "This is not a real report, does not identify a person, and is not in the verified lookup list.",
+      ].join("\n");
+    }
+    if (!report) return;
     try {
-      await navigator.clipboard.writeText(ResultText(result, combined, aiAnalysis, text));
+      await navigator.clipboard.writeText(report);
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2200);
-    } catch {
-      setCopied(false);
-    }
+    } catch { setCopied(false); }
   };
-
   const handleExample = (exampleText: string) => {
     setText(exampleText);
     setShowExamples(false);
-    void runAnalysis(exampleText);
+    setMessageResult(analyzeMessage(exampleText));
+    setWebsiteResult(null);
+    setPhoneResult(null);
   };
-
-  const displayedRisk: RiskLevel = combined?.combinedRisk ?? result?.riskLevel ?? "low";
-  const riskConfig = result ? RISK_CONFIG[displayedRisk] : null;
+  const currentRisk = messageResult?.riskLevel ?? (websiteResult ? websiteRisk(websiteResult) : null);
+  const riskConfig = currentRisk ? RISK_CONFIG[currentRisk] : null;
   const RiskIcon = riskConfig?.icon;
-  const messageSignals = result
-    ? result.signals.filter((signal) => signal.category !== "link" || !result.linkAnalyses.some((analysis) => analysis.signals.some((urlSignal) => urlSignal.id === signal.id)))
+  const messageSignals = messageResult
+    ? messageResult.signals.filter((signal) => signal.category !== "link" || !messageResult.linkAnalyses.some((analysis) => analysis.signals.some((urlSignal) => urlSignal.id === signal.id)))
     : [];
-  const linkAnalysisCards = result
-    ? result.linkAnalyses.filter((analysis, index, analyses) => analyses.findIndex(
+  const linkAnalysisCards = messageResult
+    ? messageResult.linkAnalyses.filter((analysis, index, analyses) => analyses.findIndex(
       (candidate) => getUrlDeduplicationKey(candidate.url) === getUrlDeduplicationKey(analysis.url)
     ) === index)
     : [];
+  const activeResult = !!messageResult || !!websiteResult || !!phoneResult || phoneDemo;
+  const modeTitles: Record<CheckMode, string> = { phone: "Phone Number", message: "SMS / Message", website: "Website" };
+  const alternatives = websiteResult ? getVerifiedAlternativesForUrl(websiteResult.url) : [];
+  const selectedInputId = `${mode}-input`;
   const wordCount = text.trim() ? text.trim().split(/\s+/).length : 0;
 
   return (
@@ -460,176 +430,123 @@ export default function App() {
       <a className="skip-link" href="#main-content">Skip to main content</a>
       <header className="topbar">
         <div className="topbar-inner">
-          <a className="brand" href="#top" aria-label="ScamCheck home">
-            <span className="brand-mark"><Shield size={22} strokeWidth={2.2} aria-hidden="true" /></span>
-            <span><span className="brand-name">ScamCheck</span><span className="brand-caption">A pause before you act</span></span>
-          </a>
+          <a className="brand" href="#top" aria-label="ScamCheck home"><span className="brand-mark"><Shield size={22} strokeWidth={2.2} aria-hidden="true" /></span><span><span className="brand-name">ScamCheck</span><span className="brand-caption">A pause before you act</span></span></a>
           <nav id="main-navigation" className={`main-nav${mobileMenuOpen ? " is-open" : ""}`} aria-label="Main navigation">
-            <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} data-testid="nav-how-it-works">How it works</a>
-            <a href="#safety" onClick={() => setMobileMenuOpen(false)} data-testid="nav-safety">Safety tips</a>
-            <a href="#help" onClick={() => setMobileMenuOpen(false)} data-testid="nav-help">Get help</a>
+            <a href="#how-it-works" onClick={() => setMobileMenuOpen(false)} data-testid="nav-how-it-works">How it works</a><a href="#safety" onClick={() => setMobileMenuOpen(false)} data-testid="nav-safety">Safety tips</a><a href="#help" onClick={() => setMobileMenuOpen(false)} data-testid="nav-help">Get help</a>
           </nav>
           <div className="top-actions">
-            <button className="icon-button mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen} aria-controls="main-navigation" data-testid="button-mobile-menu">
-              {mobileMenuOpen ? <X size={18} aria-hidden="true" /> : <Menu size={18} aria-hidden="true" />}
-            </button>
-            <button className="icon-button" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} data-testid="button-theme-toggle">
-              {theme === "dark" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}
-            </button>
-            <a className="primary-button" href="#analyze" aria-label="Analyze a message" data-testid="nav-analyze"><ShieldCheck size={16} aria-hidden="true" /> Analyze</a>
+            <button className="icon-button mobile-menu-toggle" type="button" onClick={() => setMobileMenuOpen((open) => !open)} aria-label={mobileMenuOpen ? "Close navigation menu" : "Open navigation menu"} aria-expanded={mobileMenuOpen} aria-controls="main-navigation" data-testid="button-mobile-menu">{mobileMenuOpen ? <X size={18} aria-hidden="true" /> : <Menu size={18} aria-hidden="true" />}</button>
+            <button className="icon-button" type="button" onClick={toggleTheme} aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} title={`Switch to ${theme === "dark" ? "light" : "dark"} theme`} data-testid="button-theme-toggle">{theme === "dark" ? <Sun size={18} aria-hidden="true" /> : <Moon size={18} aria-hidden="true" />}</button>
+            <a className="primary-button" href="#analyze" aria-label="Start a check" data-testid="nav-analyze"><ShieldCheck size={16} aria-hidden="true" /> Check</a>
           </div>
         </div>
       </header>
-
       <main id="main-content">
         <div id="top" className="page-wrap">
           <section className="hero" aria-labelledby="hero-title">
             <div className="hero-copy">
               <div className="eyebrow"><span className="eyebrow-dot" /> Take a moment. Check first.</div>
               <h1 id="hero-title">Check before <span>you click.</span></h1>
-              <p className="hero-lede">Paste an unexpected message, email, or URL. See the evidence, then choose a safer next step.</p>
-              <div className="hero-note"><LockKeyhole size={15} aria-hidden="true" /> Your message is analyzed in this session. Don’t include private credentials.</div>
+              <p className="hero-lede">Check suspicious phone numbers, messages, and websites with evidence kept on your device.</p>
+              <div className="hero-note"><LockKeyhole size={15} aria-hidden="true" /> Phone numbers are checked locally and never sent to an outside service.</div>
             </div>
             <div className="hero-mark" aria-hidden="true"><span><ShieldCheck size={27} /></span><p>Pause.<br />Check.<br />Choose safely.</p></div>
           </section>
-
           <section className="analysis-card reveal" id="analyze" aria-labelledby="analysis-heading">
-            <div className="section-kicker">Start with the message</div>
+            <div className="section-kicker">Local-first checks</div>
             <h2 id="analysis-heading">What would you like to check?</h2>
-            <p className="input-subtitle">Paste the message or URL as it appeared. We’ll point out patterns to consider—not make a guarantee.</p>
-            <label htmlFor="message-input" className="section-kicker" style={{ display: "block", color: "hsl(var(--muted))", letterSpacing: ".035em", textTransform: "none", marginBottom: 8 }}>Message, email, or link</label>
-            <textarea
-              id="message-input"
-              className="message-input"
-              value={text}
-              onChange={(event) => setText(event.target.value)}
-              onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") handleCheck(); }}
-              placeholder="Paste the full text here…"
-              rows={6}
-              maxLength={3000}
-              aria-describedby="input-hint"
-              data-testid="input-message"
-            />
-            <div className="input-meta" id="input-hint"><span>Don’t paste OTPs, passwords or card numbers. If AI analysis is on, your text is sent to an AI service (OpenAI). Max 3,000 characters.</span><span>{wordCount} {wordCount === 1 ? "word" : "words"}</span></div>
-            <div className="input-actions">
-              <button className="primary-button" type="button" onClick={handleCheck} disabled={!text.trim() || aiLoading} data-testid="button-check-message">
-                <ShieldCheck size={18} aria-hidden="true" /> Analyze with ScamCheck <ArrowRight size={16} aria-hidden="true" />
-              </button>
-              <button className="secondary-button" type="button" onClick={() => setShowExamples((visible) => !visible)} aria-expanded={showExamples} aria-controls="example-panel" data-testid="button-toggle-examples">
-                <Sparkles size={16} aria-hidden="true" /> {showExamples ? "Hide examples" : "Try an example"}
-              </button>
+            <p className="input-subtitle">Choose a check type. Each result stays separate when you switch modes.</p>
+            <div className="mode-switch" role="group" aria-label="Check type">
+              {(["phone", "message", "website"] as CheckMode[]).map((item) => (
+                <button key={item} type="button" className={`mode-button${mode === item ? " is-active" : ""}`} aria-pressed={mode === item} onClick={() => changeMode(item)} data-testid={`button-mode-${item}`}>
+                  {item === "phone" ? <Phone size={17} aria-hidden="true" /> : item === "website" ? <Link2 size={17} aria-hidden="true" /> : <ShieldCheck size={17} aria-hidden="true" />}{modeTitles[item]}
+                </button>
+              ))}
             </div>
-            {showExamples && (
-              <div className="example-panel" id="example-panel">
-                <p className="example-heading">Choose a sample message to explore the result:</p>
-                <div className="example-list">
-                  {EXAMPLE_MESSAGES.map((example, index) => (
-                    <button type="button" key={example.label} className="example-item" onClick={() => handleExample(example.text)} data-testid={`button-example-${index}`}>
-                      {example.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
+            <label htmlFor={selectedInputId} className="section-kicker input-label">
+              {mode === "phone" ? "Indian mobile number" : mode === "website" ? "Website address" : "Message or SMS"}
+            </label>
+            {mode === "phone" ? (
+              <input id="phone-input" className="message-input single-line-input" type="tel" inputMode="tel" autoComplete="off" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") handleCheck(); }} placeholder="+91 98765 43210" aria-describedby="input-hint" data-testid="input-phone" />
+            ) : mode === "website" ? (
+              <input id="website-input" className="message-input single-line-input" type="text" inputMode="url" autoComplete="off" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") handleCheck(); }} placeholder="https://example.com" aria-describedby="input-hint" data-testid="input-website" />
+            ) : (
+              <textarea id="message-input" className="message-input" value={text} onChange={(event) => setText(event.target.value)} onKeyDown={(event) => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") handleCheck(); }} placeholder="Paste the full text here…" rows={6} maxLength={3000} aria-describedby="input-hint" data-testid="input-message" />
             )}
-            {aiLoading && (
-              <div className="loading-panel" role="status" aria-live="polite" data-testid="status-analysis-loading">
-                <div className="loading-orbit"><ShieldCheck size={23} aria-hidden="true" /></div>
-                <div><strong>Your local rule-based result is ready</strong><p>Optional AI context is still pending. You can review the available findings below.</p></div>
-              </div>
-            )}
+            <div className="input-meta" id="input-hint">
+              <span>{mode === "phone" ? "Formatting spaces and hyphens are removed. Lookup uses only a verified local list." : mode === "website" ? "The address is analyzed locally and never opened or fetched." : "Don’t paste OTPs, passwords or card numbers. Message analysis runs in this browser. Max 3,000 characters."}</span>
+              {mode === "message" && <span>{wordCount} {wordCount === 1 ? "word" : "words"}</span>}
+            </div>
+            <div className="input-actions">
+              <button className="primary-button" type="button" onClick={handleCheck} disabled={!text.trim()} data-testid="button-run-check"><ShieldCheck size={18} aria-hidden="true" /> Check {modeTitles[mode]} <ArrowRight size={16} aria-hidden="true" /></button>
+              {mode === "phone" && <button className="secondary-button" type="button" onClick={() => { setText(""); clearResults(); setPhoneDemo(true); }} data-testid="button-phone-demo">View synthetic demo (clears input)</button>}
+              {mode === "message" && <button className="secondary-button" type="button" onClick={() => setShowExamples((visible) => !visible)} aria-expanded={showExamples} aria-controls="example-panel" data-testid="button-toggle-examples"><Sparkles size={16} aria-hidden="true" /> {showExamples ? "Hide examples" : "Try an example"}</button>}
+            </div>
+            {mode === "website" && text.trim() && !normalizeWebsiteUrlInput(text) && <p className="input-validation" role="status" data-testid="status-website-input">Enter one valid web address without spaces. Bare domains such as example.com are accepted.</p>}
+            {showExamples && mode === "message" && <div className="example-panel" id="example-panel"><p className="example-heading">Choose a sample message to explore the result:</p><div className="example-list">{EXAMPLE_MESSAGES.map((example, index) => <button type="button" key={example.label} className="example-item" onClick={() => handleExample(example.text)} data-testid={`button-example-${index}`}>{example.label}</button>)}</div></div>}
           </section>
 
-          {result && riskConfig && RiskIcon && (
-            <section className={`results risk-${displayedRisk} reveal`} aria-label="Analysis results" data-testid="section-analysis-results">
-              <div className="result-banner" role="status" aria-live="polite" data-testid="status-risk-result">
-                <div className="risk-mark"><RiskIcon size={29} strokeWidth={2.1} aria-hidden="true" /></div>
-                <div>
-                  <div className="risk-heading">{riskConfig.label}{aiAnalysis && combined && combined.combinedConfidence > 0 ? <span className="confidence-label"> · {combined.combinedConfidence}% combined confidence</span> : <span className="confidence-label"> · {aiAnalysis ? "Optional AI context included" : "Rule-based assessment"}</span>}</div>
-                  <p className="risk-copy">{result.signals.length === 0 ? "No warning signs were detected by the current rules. Still verify unexpected requests through a trusted channel." : `${result.signals.length} warning signal${result.signals.length === 1 ? "" : "s"} found · rule-based score ${result.totalScore}.`}</p>
-                  {combined?.aiRisk && <p className="risk-meta">Rule-based: {combined.ruleRisk.toUpperCase()} · AI: {combined.aiRisk} · Combined: {combined.combinedRisk.toUpperCase()}</p>}
-                </div>
-                <div className="result-actions">
-                  <button className="icon-button" type="button" onClick={() => void handleCopy()} aria-label="Copy full analysis report" title="Copy report" data-testid="button-copy-report"><Copy size={17} aria-hidden="true" /></button>
-                </div>
-              </div>
-
+          {messageResult && riskConfig && RiskIcon && (
+            <section className={`results risk-${messageResult.riskLevel} reveal`} aria-label="Message analysis results" data-testid="section-analysis-results">
+              <div className="result-banner" role="status" aria-live="polite" data-testid="status-risk-result"><div className="risk-mark"><RiskIcon size={29} strokeWidth={2.1} aria-hidden="true" /></div><div><div className="risk-heading">{riskConfig.label}<span className="confidence-label"> · Rule-based assessment</span></div><p className="risk-copy">{messageResult.signals.length === 0 ? "No warning signs were detected by the current rules. Still verify unexpected requests through a trusted channel." : `${messageResult.signals.length} warning signal${messageResult.signals.length === 1 ? "" : "s"} found · rule-based score ${messageResult.totalScore}.`}</p></div><div className="result-actions"><button className="icon-button" type="button" onClick={() => void handleCopy()} aria-label="Copy full analysis report" title="Copy report" data-testid="button-copy-report"><Copy size={17} aria-hidden="true" /></button></div></div>
               <section className="content-card why-card" aria-labelledby="why-heading">
                 <div className="card-heading"><Info size={20} aria-hidden="true" /><div><div className="section-kicker">Evidence from this message</div><h2 id="why-heading">Why this result</h2></div></div>
-                <p className="explanation-copy">{result.explanation}</p>
-                {messageSignals.length > 0 && <div className="why-subsection">
-                  <h3>Rule-based signals</h3>
-                  <ul className="plain-list">{messageSignals.map((signal) => <li className="signal-row" key={signal.id}><span className="signal-marker"><CircleAlert size={15} aria-hidden="true" /></span><div><strong>{signal.label}</strong><span className="signal-points">{signal.points} {signal.points === 1 ? "point" : "points"}</span>{signal.detail && <p>{signal.detail}</p>}</div></li>)}</ul>
-                </div>}
-                {result.combinations.length > 0 && <div className="why-subsection">
-                  <h3>Signals that appear together</h3>
-                  <ul className="plain-list">{result.combinations.map((combination) => <li className="signal-row" key={combination.id}><span className="signal-marker"><AlertTriangle size={15} aria-hidden="true" /></span><div><strong>{combination.label}</strong><p>Combined rule bonus: {combination.bonus} points</p></div></li>)}</ul>
-                </div>}
-                {result.categories.length > 0 && <div className="why-subsection">
-                  <h3>Risk categories</h3>
-                  <div className="factor-grid">{result.categories.map((category) => <div className="factor-row" key={category.category}><span>{CATEGORY_LABELS[category.category]} · {category.points} pts</span><span className={`factor-pill factor-${category.level}`}>{category.level}</span></div>)}</div>
-                </div>}
+                <p className="explanation-copy" data-testid="text-result-explanation">{messageResult.explanation}</p>
+                {messageSignals.length > 0 && <div className="why-subsection"><h3>Rule-based signals</h3><ul className="plain-list">{messageSignals.map((signal) => <li className="signal-row" key={signal.id} data-testid={`item-signal-${signal.id}`}><span className="signal-marker"><CircleAlert size={15} aria-hidden="true" /></span><div><strong>{signal.label}</strong><span className="signal-points">{signal.points} {signal.points === 1 ? "point" : "points"}</span>{signal.detail && <p>{signal.detail}</p>}</div></li>)}</ul></div>}
+                {messageResult.combinations.length > 0 && <div className="why-subsection"><h3>Signals that appear together</h3><ul className="plain-list">{messageResult.combinations.map((combination) => <li className="signal-row" key={combination.id}><span className="signal-marker"><AlertTriangle size={15} aria-hidden="true" /></span><div><strong>{combination.label}</strong><p>Combined rule bonus: {combination.bonus} points</p></div></li>)}</ul></div>}
+                {messageResult.categories.length > 0 && <div className="why-subsection"><h3>Risk categories</h3><div className="factor-grid">{messageResult.categories.map((category) => <div className="factor-row" key={category.category}><span>{CATEGORY_LABELS[category.category]} · {category.points} pts</span><span className={`factor-pill factor-${category.level}`}>{category.level}</span></div>)}</div></div>}
                 {linkAnalysisCards.map((analysis) => <LinkAnalysisCard key={getUrlDeduplicationKey(analysis.url)} analysis={analysis} />)}
-                {aiLoading ? <div className="ai-pending" role="status" aria-live="polite" data-testid="status-ai-loading"><Brain size={17} aria-hidden="true" /><span><strong>Optional AI context pending</strong><small>Your local rule-based result is ready and available above.</small></span></div> : null}
-                {!aiLoading && (aiAnalysis || aiError) ? <AiAnalysisCard ai={aiAnalysis} error={aiError} combined={combined} onRetry={() => void runAnalysis(text)} /> : null}
               </section>
-
               <SafeAlternativeSection message={text} />
-              <ActionChecklist result={result} risk={displayedRisk} aiAdvice={aiAnalysis?.advice ?? []} />
-              <HelpSection />
-
-              <div className="disclaimer" data-testid="text-analysis-disclaimer">{result.disclaimer} ScamCheck provides informational analysis and does not replace official law-enforcement or financial-institution advice.</div>
-              <div className="result-toolbar">
-                <div>
-                  <button className="secondary-button" type="button" onClick={() => void handleCopy()} data-testid="button-copy-report-full">{copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}{copied ? "Report copied" : "Copy full report"}</button>
-                  <button className="secondary-button" type="button" onClick={handleTryAnother} data-testid="button-try-another"><RotateCcw size={16} aria-hidden="true" /> Check another</button>
-                </div>
-                <button className="quiet-button" type="button" onClick={handleClear} data-testid="button-clear"><Trash2 size={15} aria-hidden="true" /> Clear message</button>
-              </div>
+              <ActionChecklist result={messageResult} risk={messageResult.riskLevel} />
+              <div className="disclaimer" data-testid="text-analysis-disclaimer">{messageResult.disclaimer} ScamCheck provides informational analysis and does not replace official law-enforcement or financial-institution advice.</div>
             </section>
           )}
-        </div>
 
-        <section className="how-section page-wrap scroll-reveal" id="how-it-works" aria-labelledby="how-heading" data-scroll-reveal>
-              <div className="how-intro">
-                <div className="section-kicker">A clear, simple process</div>
-                <h2 id="how-heading">Understand the clues. Choose your next step.</h2>
-                <p>ScamCheck helps make an unsettling message easier to think through—without making the decision for you.</p>
-              </div>
-              <div className="steps-list">
-                <div className="how-step"><span className="step-number">01</span><div><strong>Paste what arrived</strong><p>Share an SMS, email excerpt or link that you want to look at more carefully.</p></div></div>
-                <div className="how-step"><span className="step-number">02</span><div><strong>See the warning signs</strong><p>Rule-based patterns and URL structure are summarized in everyday language.</p></div></div>
-                <div className="how-step"><span className="step-number">03</span><div><strong>Verify through a trusted route</strong><p>Use a verified alternative when one is available, or navigate manually to the organization.</p></div></div>
-              </div>
-        </section>
-        <section className="safety-section page-wrap scroll-reveal" id="safety" aria-labelledby="safety-heading" data-scroll-reveal>
-              <div className="safety-card">
-                <div className="section-kicker">A small pause helps</div>
-                <h2 id="safety-heading">Keep control of the conversation.</h2>
-                <p>Scammers often create pressure. Take time to verify requests independently, especially before sharing account details or sending money.</p>
-                <div className="safety-points">
-                  <span className="safety-point"><LockKeyhole size={15} aria-hidden="true" /> Never share OTPs or passwords</span>
-                  <span className="safety-point"><Link2 size={15} aria-hidden="true" /> Avoid unexpected message links</span>
-                  <span className="safety-point"><Phone size={15} aria-hidden="true" /> Verify through a trusted contact route</span>
+          {websiteResult && riskConfig && RiskIcon && (
+            <section className={`results risk-${websiteRisk(websiteResult)} reveal`} aria-label="Website analysis results" data-testid="section-website-results">
+              <div className="result-banner" role="status" aria-live="polite" data-testid="status-website-risk"><div className="risk-mark"><RiskIcon size={29} strokeWidth={2.1} aria-hidden="true" /></div><div><div className="risk-heading">{riskConfig.label}<span className="confidence-label"> · Local URL rules</span></div><p className="risk-copy">{websiteResult.signals.length} warning signal{websiteResult.signals.length === 1 ? "" : "s"} found · {websiteResult.summary}</p></div></div>
+              <SafeAlternativeSection message={websiteResult.url} website />
+              <LinkAnalysisCard analysis={websiteResult} />
+              <section className="content-card" aria-labelledby="website-guidance-heading" data-testid="section-website-guidance"><div className="card-heading"><ShieldCheck size={20} aria-hidden="true" /><h2 id="website-guidance-heading">Safe next step</h2></div><p className="explanation-copy">The address was checked as text only. ScamCheck did not visit it. Verify unexpected requests through an official app or a trusted contact route.</p></section>
+            </section>
+          )}
+
+          {phoneResult && (
+            <section className="results reveal" aria-label="Phone number lookup results" data-testid="section-phone-results">
+              <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
+                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.report ? "Listed in local reports" : "No verified reports available"}</h2></div>
+                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.report ? "This number appears in a local report record. A listing is not a determination about the person using it." : "This number was not found in this local list. No verified phone reports or sources have been supplied, so this is not a safety verdict."}</p>
+                {!phoneResult.invalid && <p className="phone-privacy-note"><LockKeyhole size={15} aria-hidden="true" /> Checked on this device only. The number was not logged or transmitted.</p>}
+                {phoneResult.report && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.report.source}</dd></div><div><dt>Report date</dt><dd>{phoneResult.report.reportDate}</dd></div></dl>}
+                {!phoneResult.invalid && !phoneResult.report && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>Verified local list: empty</strong><p>ScamCheck has no supplied report records or sources to search at this time.</p></div>}
+              </section>
+            </section>
+          )}
+          {phoneDemo && (
+            <section className="results reveal" aria-label="Synthetic phone report example" data-testid="section-phone-demo">
+              <section className="content-card phone-lookup-result phone-invalid" role="status" aria-live="polite">
+                <div className="card-heading"><Info size={21} aria-hidden="true" /><h2>Synthetic demo only — not a real report</h2></div>
+                <p className="explanation-copy">This fictional example demonstrates the report fields. Its placeholder is invalid as an Indian mobile number, does not identify a person, and is never searched as a real report.</p>
+                <div className="phone-empty-state">
+                  <strong>Demo identifier: {SYNTHETIC_PHONE_REPORT_DEMO.number}</strong>
+                  <p>Source: {SYNTHETIC_PHONE_REPORT_DEMO.source}<br />Report date: {SYNTHETIC_PHONE_REPORT_DEMO.reportDate}</p>
                 </div>
-              </div>
-        </section>
-        {!result && <HelpSection />}
-      </main>
-
-      <footer className="footer">
-        <div className="page-wrap">
-          <div className="footer-inner scroll-reveal" data-scroll-reveal>
-            <div className="footer-brand">
-              <a className="brand" href="#top"><span className="brand-mark"><Shield size={19} aria-hidden="true" /></span><span className="brand-name">ScamCheck</span></a>
-              <p>Understand suspicious messages before you act.</p>
+              </section>
+            </section>
+          )}
+          {activeResult && (
+            <div className="result-toolbar" data-testid="toolbar-result-actions">
+              <div><button className="secondary-button" type="button" onClick={() => void handleCopy()} data-testid="button-copy-report-full">{copied ? <Check size={16} aria-hidden="true" /> : <Copy size={16} aria-hidden="true" />}{copied ? "Report copied" : "Copy / export report"}</button><button className="secondary-button" type="button" onClick={handleTryAnother} data-testid="button-try-another"><RotateCcw size={16} aria-hidden="true" /> Check another</button></div>
+              <button className="quiet-button" type="button" onClick={handleClear} data-testid="button-clear"><Trash2 size={15} aria-hidden="true" /> Clear {modeTitles[mode]}</button>
             </div>
-            <div className="footer-group"><h3>Product</h3><div className="footer-links"><a href="#analyze">Analyze</a><a href="#how-it-works">How it works</a><a href="#safety">Safety tips</a></div></div>
-            <div className="footer-group"><h3>Help</h3><div className="footer-links"><a href="https://www.cybercrime.gov.in/" target="_blank" rel="noopener noreferrer">Report Cybercrime</a><a href="tel:1930">Cybercrime Helpline: 1930</a><a href="https://cybercrime.gov.in/Webform/cyber_suspect.aspx" target="_blank" rel="noopener noreferrer">Official Reporting Portal</a></div></div>
-            <div className="footer-group"><h3>Security</h3><div className="footer-links"><a href="#safety">Safe browsing</a><a href="#safety">Phishing awareness</a><a href="#privacy-note">Privacy & limits</a></div></div>
-          </div>
-          <div className="footer-note" id="privacy-note"><p>ScamCheck provides informational analysis and does not replace official law-enforcement or financial-institution advice. It cannot guarantee that a message is safe or fraudulent. The rule-based check runs in your browser. When the optional AI analysis is turned on, the message text is sent to OpenAI to produce the second opinion, and ScamCheck does not store it. ScamCheck does not submit complaints on your behalf.</p></div>
+          )}
         </div>
-      </footer>
+        <section className="how-section page-wrap scroll-reveal" id="how-it-works" aria-labelledby="how-heading" data-scroll-reveal><div className="how-intro"><div className="section-kicker">A clear, simple process</div><h2 id="how-heading">Understand the clues. Choose your next step.</h2><p>ScamCheck helps make an unsettling message easier to think through—without making the decision for you.</p></div><div className="steps-list"><div className="how-step"><span className="step-number">01</span><div><strong>Choose what arrived</strong><p>Check a phone number, SMS or message, or website address.</p></div></div><div className="how-step"><span className="step-number">02</span><div><strong>See local evidence</strong><p>Rule-based patterns and URL structure are summarized in everyday language.</p></div></div><div className="how-step"><span className="step-number">03</span><div><strong>Verify through a trusted route</strong><p>Use a verified alternative when one is available, or navigate manually to the organization.</p></div></div></div></section>
+        <section className="safety-section page-wrap scroll-reveal" id="safety" aria-labelledby="safety-heading" data-scroll-reveal><div className="safety-card"><div className="section-kicker">A small pause helps</div><h2 id="safety-heading">Keep control of the conversation.</h2><p>Scammers often create pressure. Take time to verify requests independently, especially before sharing account details or sending money.</p><div className="safety-points"><span className="safety-point"><LockKeyhole size={15} aria-hidden="true" /> Never share OTPs or passwords</span><span className="safety-point"><Link2 size={15} aria-hidden="true" /> Avoid unexpected message links</span><span className="safety-point"><Phone size={15} aria-hidden="true" /> Verify through a trusted contact route</span></div></div></section>
+        <HelpSection />
+      </main>
+      <footer className="footer"><div className="page-wrap"><div className="footer-inner scroll-reveal" data-scroll-reveal><div className="footer-brand"><a className="brand" href="#top"><span className="brand-mark"><Shield size={19} aria-hidden="true" /></span><span className="brand-name">ScamCheck</span></a><p>Understand suspicious messages before you act.</p></div><div className="footer-group"><h3>Product</h3><div className="footer-links"><a href="#analyze">Analyze</a><a href="#how-it-works">How it works</a><a href="#safety">Safety tips</a></div></div><div className="footer-group"><h3>Help</h3><div className="footer-links"><a href="https://www.cybercrime.gov.in/" target="_blank" rel="noopener noreferrer">Report Cybercrime</a><a href="tel:1930">Cybercrime Helpline: 1930</a><a href="https://cybercrime.gov.in/Webform/cyber_suspect.aspx" target="_blank" rel="noopener noreferrer">Official Reporting Portal</a></div></div><div className="footer-group"><h3>Security</h3><div className="footer-links"><a href="#safety">Safe browsing</a><a href="#safety">Phishing awareness</a><a href="#privacy-note">Privacy & limits</a></div></div></div><div className="footer-note" id="privacy-note"><p>ScamCheck provides informational analysis and does not replace official law-enforcement or financial-institution advice. It cannot guarantee that a message or site is safe or fraudulent. Message and website checks run locally in your browser; phone numbers are checked locally and are not transmitted. ScamCheck does not submit complaints on your behalf.</p></div></div></footer>
     </div>
   );
 }

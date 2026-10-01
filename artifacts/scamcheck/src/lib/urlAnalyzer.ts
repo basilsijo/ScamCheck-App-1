@@ -184,6 +184,39 @@ export function extractUrls(text: string): string[] {
   return found;
 }
 
+/**
+ * Accepts one full URL or bare domain for local analysis. Bare domains are
+ * treated as HTTP rather than assuming the user supplied HTTPS.
+ */
+export function normalizeWebsiteUrlInput(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed || /\s/.test(trimmed)) return null;
+
+  const extracted = extractUrls(trimmed);
+  if (extracted.length > 1) return null;
+
+  let candidate = extracted[0] ?? trimmed;
+  if (!/^https?:\/\//i.test(candidate)) {
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(candidate)) return null;
+    candidate = `http://${candidate}`;
+  }
+
+  try {
+    const parsed = new URL(candidate);
+    if (
+      !["http:", "https:"].includes(parsed.protocol) ||
+      !parsed.hostname.includes(".") ||
+      parsed.username ||
+      parsed.password
+    ) {
+      return null;
+    }
+    return parsed.href;
+  } catch {
+    return null;
+  }
+}
+
 // ---- Domain parsing -----------------------------------------------------
 
 function getDomain(url: string): string {
@@ -510,4 +543,24 @@ export function getAllUrlSignals(urls: string[], messageText: string): {
   }
   const signals = Array.from(signalMap.entries()).map(([id, points]) => ({ id, points }));
   return { analyses, signals };
+}
+
+/** Resolve alternatives from the URL host, including recognized lookalikes. */
+export function getVerifiedAlternativesForUrl(url: string): VerifiedAlternative[] {
+  const domain = getDomain(url);
+  if (!domain) return [];
+
+  const directMatches = getVerifiedAlternatives(domain);
+  if (directMatches.some((entry) => entry.officialUrl)) return directMatches;
+
+  const lookalike = LOOKALIKE_DEFS.find(
+    (entry) => entry.pattern.test(domain) && !domainMatchesOrgDomain(domain, entry.legit),
+  );
+  if (!lookalike) return directMatches;
+
+  const organization = ORGANIZATIONS.find(
+    (entry) => entry.displayName.toLowerCase() === lookalike.org.toLowerCase(),
+  );
+  if (!organization?.officialUrl) return directMatches;
+  return [{ organization: organization.displayName, officialUrl: organization.officialUrl }];
 }

@@ -1,0 +1,57 @@
+I checked the fixed ZIP. The app is in `artifacts/scamcheck`; it already has local SMS/message analysis, URL analysis, and verified organization alternatives. Here’s a Replit prompt tailored to that project:
+
+```text
+Update the existing ScamCheck app with three check modes: Phone Number, SMS/Message, and Website. First inspect the current code and build on its existing components and analyzers. Keep this a focused change; do not redesign or rewrite unrelated parts.
+
+The app is under artifacts/scamcheck. The main UI is src/App.tsx. Existing local analysis is in src/lib/scamAnalyzer.ts and src/lib/urlAnalyzer.ts. The current Safe Alternative UI and verified organization URLs are also in these files.
+
+1. Remove AI Overview
+- Remove the AI Context/Overview UI, loading and error states, retry controls, and AI-only copy/report output.
+- Remove frontend calls to the AI service and AI-only combined-risk presentation. Use the existing rule-based risk result for the risk banner.
+- Preserve the existing local rule-based SMS and URL analysis, advice, link findings, safe alternatives, and report/copy functionality.
+- Do not expose or move any OpenAI key. Do not add an AI service.
+
+2. Add three clear check options
+Add an accessible mode selector or tabs:
+- Phone number
+- SMS / Message
+- Website
+
+Keep each mode’s input and action clear on desktop and mobile. Reuse the existing ScamCheck visual style and components.
+
+3. Phone number check
+- Add a small local Indian phone-number report database, preferably in a focused file such as src/lib/indiaScamNumbers.ts.
+- Normalize common Indian input formats such as +91, spaces, and hyphens before lookup; validate that the resulting number has a plausible Indian mobile format.
+- Seed only entries whose numbers and reports can be verified from credible, public sources. Record a source and report date for every entry. Describe matches as “reported” or “listed in a public advisory,” not as a definitive claim that a person is a scammer.
+- Never invent real phone numbers or attach unverified accusations to a real person. If suitable sourced entries are unavailable, use clearly labeled synthetic demo data that cannot be mistaken for real numbers.
+- A database match should show the source and explain the limits of the report. A number with no match must be described as “not found in this local list,” never “safe.”
+- Keep this lookup local; don’t send phone numbers to an external API or log them.
+
+4. SMS / Message check
+- Use the existing analyzeMessage rule-based flow for pasted message text.
+- Continue showing the existing risk level, explanation, findings, advice, detected links, and verified Safe Alternative section.
+- Do not trigger AI analysis.
+
+5. Website check
+- Provide a separate URL input and use the existing URL extraction and analyzeUrl logic in src/lib/urlAnalyzer.ts.
+- Show the website’s risk level first. Immediately after the risk banner, show a Safe Alternative section when the URL belongs to or appears to impersonate an organization recognized in the existing ORGANIZATIONS data.
+- Reuse only that local organization database for verified official links. Never ask a model or external API to invent a URL. Never present the submitted/suspicious URL as the recommended alternative.
+- If no verified alternative exists, say so and provide generic safe steps without guessing a domain.
+- Don’t automatically open or redirect to the submitted URL. Render it as plain text and visually distinguish it from any verified alternative.
+
+6. Preserve and validate
+- Keep the existing analyzer thresholds, URL checks, organization matching, and visual style wherever possible.
+- Ensure the copy/exported result matches the selected mode and includes its risk findings and safe alternative or fallback guidance.
+- Remove stale AI references from the active UI and report output. Only delete AI backend files if they have no remaining use; avoid unrelated cleanup.
+- Run the existing typecheck and build scripts from the correct workspace/package and fix errors introduced by this change.
+
+Acceptance checks:
+- Phone mode normalizes +91 and formatted input and finds only sourced entries; an unlisted number is not called safe.
+- SMS mode still shows the existing local risk analysis and detected-link warnings, with no AI loading or overview.
+- Website mode shows risk first, then a verified alternative only when one is available in ORGANIZATIONS; unknown organizations get generic fallback guidance.
+- No suspicious URL is recommended or opened automatically.
+- Switching modes clears or isolates prior results so one mode cannot display stale results from another.
+- The app builds and the existing SMS/website rules still work.
+
+When finished, summarize the files changed, the phone-number data sources or demo-data limitation, and validation results.
+```

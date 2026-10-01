@@ -1,6 +1,7 @@
 import { runTests } from "../src/lib/scamAnalyzer.ts";
+import { runFeatureTests } from "./featureTests.ts";
 
-const results = runTests();
+const results = [...runTests(), ...runFeatureTests()];
 let pass = 0, fail = 0;
 for (const r of results) {
   const status = r.passed ? "PASS" : "FAIL";
