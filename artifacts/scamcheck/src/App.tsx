@@ -207,10 +207,10 @@ function SafeAlternativeSection({ message, website = false }: { message: string;
   );
 }
 
-function LinkAnalysisCard({ analysis }: { analysis: UrlAnalysis }) {
+function LinkAnalysisCard({ analysis, title = "Link analysis" }: { analysis: UrlAnalysis; title?: string }) {
   return (
     <section className="content-card" data-testid="card-link-analysis">
-      <div className="card-heading"><Link2 size={21} aria-hidden="true" /><h2>Link analysis</h2></div>
+      <div className="card-heading"><Link2 size={21} aria-hidden="true" /><h2>{title}</h2></div>
       <div className="link-card-url">
         <small>Detected URL — not opened by ScamCheck</small>
         <p>{analysis.url}</p>
@@ -548,7 +548,7 @@ export default function App() {
             <section className={`results risk-${websiteRisk(websiteResult)} reveal`} aria-label="Website analysis results" data-testid="section-website-results">
               <div className="result-banner" role="status" aria-live="polite" data-testid="status-website-risk"><div className="risk-mark"><RiskIcon size={29} strokeWidth={2.1} aria-hidden="true" /></div><div><div className="risk-heading">{riskConfig.label}<span className="confidence-label"> · Local URL rules</span></div><p className="risk-copy">{websiteResult.signals.length} warning signal{websiteResult.signals.length === 1 ? "" : "s"} found · {websiteResult.summary}</p></div></div>
               <SafeAlternativeSection message={websiteResult.url} website />
-              <LinkAnalysisCard analysis={websiteResult} />
+              <LinkAnalysisCard analysis={websiteResult} title="Why this result?" />
               <section className="content-card" aria-labelledby="website-guidance-heading" data-testid="section-website-guidance"><div className="card-heading"><ShieldCheck size={20} aria-hidden="true" /><h2 id="website-guidance-heading">Safe next step</h2></div><p className="explanation-copy">The address was checked as text only. ScamCheck did not visit it. Verify unexpected requests through an official app or a trusted contact route.</p></section>
             </section>
           )}
