@@ -1,6 +1,6 @@
 import {
-  VERIFIED_INDIAN_PHONE_REPORTS,
-  type VerifiedIndianPhoneReport,
+  USER_SUBMITTED_INDIAN_PHONE_REPORTS,
+  type UserSubmittedIndianPhoneReport,
 } from "./indiaScamNumbers";
 
 /**
@@ -9,12 +9,25 @@ import {
  */
 export function normalizeIndianMobileNumber(value: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed || !/^\+?[\d\s()-]+$/.test(trimmed)) return null;
+  if (!trimmed) return null;
 
-  const digits = trimmed.replace(/\D/g, "");
+  let parenthesisDepth = 0;
+  for (const character of trimmed) {
+    if (character === "(") parenthesisDepth += 1;
+    if (character === ")") parenthesisDepth -= 1;
+    if (parenthesisDepth < 0) return null;
+  }
+  if (parenthesisDepth !== 0) return null;
+
+  // Only remove common formatting. Other characters make the input invalid.
+  const compact = trimmed.replace(/[\s\-‐‑‒–—'‘’ʼ`()]/gu, "");
+  if (!/^\+?\d+$/.test(compact)) return null;
+
+  const hasPlusPrefix = compact.startsWith("+");
+  const digits = hasPlusPrefix ? compact.slice(1) : compact;
   let nationalNumber = digits;
 
-  if (trimmed.startsWith("+")) {
+  if (hasPlusPrefix) {
     if (!digits.startsWith("91") || digits.length !== 12) return null;
     nationalNumber = digits.slice(2);
   } else if (digits.length === 12 && digits.startsWith("91")) {
@@ -26,10 +39,10 @@ export function normalizeIndianMobileNumber(value: string): string | null {
   return /^[6-9]\d{9}$/.test(nationalNumber) ? nationalNumber : null;
 }
 
-export function findVerifiedIndianPhoneReport(
+export function findUserSubmittedIndianPhoneReport(
   normalizedNumber: string,
-): VerifiedIndianPhoneReport | undefined {
-  return VERIFIED_INDIAN_PHONE_REPORTS.find(
+): UserSubmittedIndianPhoneReport | undefined {
+  return USER_SUBMITTED_INDIAN_PHONE_REPORTS.find(
     (report) => report.number === normalizedNumber,
   );
 }

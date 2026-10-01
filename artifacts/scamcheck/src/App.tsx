@@ -43,12 +43,12 @@ import {
   type SignalCategory,
 } from "@/lib/scamAnalyzer";
 import {
-  findVerifiedIndianPhoneReport,
+  findUserSubmittedIndianPhoneReport,
   normalizeIndianMobileNumber,
 } from "@/lib/phoneNumberAnalyzer";
 import {
   SYNTHETIC_PHONE_REPORT_DEMO,
-  type VerifiedIndianPhoneReport,
+  type UserSubmittedIndianPhoneReport,
 } from "@/lib/indiaScamNumbers";
 
 const THEME_KEY = "scamcheck-theme";
@@ -281,10 +281,10 @@ function HelpSection() {
 
 type CheckMode = "phone" | "message" | "website";
 
-function phoneResultText(number: string, matched: VerifiedIndianPhoneReport | undefined, invalid: boolean): string {
+function phoneResultText(number: string, matched: UserSubmittedIndianPhoneReport | undefined, invalid: boolean): string {
   if (invalid) return `PHONE NUMBER CHECK\nThe entered value is not a plausible Indian mobile number. No lookup was performed.`;
-  if (matched) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Listed in the local verified reports list.\nSource: ${matched.source}\nReport date: ${matched.reportDate}\nThis listing is a report record, not a determination about the person using the number.`;
-  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in this local list.\nNo verified phone reports or sources have been supplied. This result does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
+  if (matched) return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: This number appears in a user-submitted, unverified report list.\nSource: ${matched.source}\nImport date: ${matched.importDate}\nA match is not proof of wrongdoing and does not determine who uses the number.`;
+  return `PHONE NUMBER CHECK\nNumber checked: ${number}\nStatus: Not found in the user-submitted, unverified report list.\nAbsence from this list does not mean the number is safe.\nThe number was checked only in this browser and was not transmitted.`;
 }
 
 function websiteRisk(analysis: UrlAnalysis): RiskLevel {
@@ -297,7 +297,7 @@ export default function App() {
   const [text, setText] = useState("");
   const [messageResult, setMessageResult] = useState<AnalysisResult | null>(null);
   const [websiteResult, setWebsiteResult] = useState<UrlAnalysis | null>(null);
-  const [phoneResult, setPhoneResult] = useState<{ number: string; report?: VerifiedIndianPhoneReport; invalid: boolean } | null>(null);
+  const [phoneResult, setPhoneResult] = useState<{ number: string; report?: UserSubmittedIndianPhoneReport; invalid: boolean } | null>(null);
   const [phoneDemo, setPhoneDemo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showExamples, setShowExamples] = useState(false);
@@ -355,7 +355,7 @@ export default function App() {
     }
     const normalized = normalizeIndianMobileNumber(text);
     const invalid = normalized === null;
-    const report = normalized ? findVerifiedIndianPhoneReport(normalized) : undefined;
+    const report = normalized ? findUserSubmittedIndianPhoneReport(normalized) : undefined;
     setPhoneResult({ number: normalized ?? "", report, invalid });
   };
   const handleClear = () => { setText(""); clearResults(); };
@@ -391,7 +391,7 @@ export default function App() {
         `Placeholder: ${SYNTHETIC_PHONE_REPORT_DEMO.number} (invalid as an Indian mobile number)`,
         `Source: ${SYNTHETIC_PHONE_REPORT_DEMO.source}`,
         `Report date: ${SYNTHETIC_PHONE_REPORT_DEMO.reportDate}`,
-        "This is not a real report, does not identify a person, and is not in the verified lookup list.",
+        "This is not a real report, does not identify a person, and is not in the user-submitted lookup list.",
       ].join("\n");
     }
     if (!report) return;
@@ -515,11 +515,11 @@ export default function App() {
           {phoneResult && (
             <section className="results reveal" aria-label="Phone number lookup results" data-testid="section-phone-results">
               <section className={`content-card phone-lookup-result${phoneResult.invalid ? " phone-invalid" : ""}`} role="status" aria-live="polite" data-testid="status-phone-lookup">
-                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.report ? "Listed in local reports" : "No verified reports available"}</h2></div>
-                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.report ? "This number appears in a local report record. A listing is not a determination about the person using it." : "This number was not found in this local list. No verified phone reports or sources have been supplied, so this is not a safety verdict."}</p>
+                <div className="card-heading">{phoneResult.invalid ? <AlertTriangle size={21} aria-hidden="true" /> : phoneResult.report ? <Info size={21} aria-hidden="true" /> : <Phone size={21} aria-hidden="true" />}<h2>{phoneResult.invalid ? "Number format not recognized" : phoneResult.report ? "User-submitted report found" : "No match in user-submitted list"}</h2></div>
+                <p className="explanation-copy">{phoneResult.invalid ? "Enter a plausible Indian mobile number with 10 digits, optionally prefixed by +91." : phoneResult.report ? "This number appears in a user-submitted, unverified report list. A match is not proof of wrongdoing and does not determine who uses the number." : "This number was not found in the user-submitted list. Its absence does not mean the number is safe."}</p>
                 {!phoneResult.invalid && <p className="phone-privacy-note"><LockKeyhole size={15} aria-hidden="true" /> Checked on this device only. The number was not logged or transmitted.</p>}
-                {phoneResult.report && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.report.source}</dd></div><div><dt>Report date</dt><dd>{phoneResult.report.reportDate}</dd></div></dl>}
-                {!phoneResult.invalid && !phoneResult.report && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>Verified local list: empty</strong><p>ScamCheck has no supplied report records or sources to search at this time.</p></div>}
+                {phoneResult.report && <dl className="report-metadata"><div><dt>Source</dt><dd>{phoneResult.report.source}</dd></div><div><dt>Import date</dt><dd>{phoneResult.report.importDate}</dd></div></dl>}
+                {!phoneResult.invalid && !phoneResult.report && <div className="phone-empty-state" data-testid="empty-phone-reports"><strong>User-submitted, unverified data</strong><p>This local lookup checks the imported list only. A match is not proof of wrongdoing; no match does not mean a number is safe.</p></div>}
               </section>
             </section>
           )}
